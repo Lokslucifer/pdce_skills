@@ -1,11 +1,11 @@
 ---
 name: task-execute-loop
-description: Run a human-in-the-loop implementation loop over the tasks in proposal.md, one task at a time, using the harness's apply-patch tool (accept/reject UI) for agent edits and git as the channel for detecting human edits. Tracks progress in a companion status.md file. Use only when explicitly named by the user (/task-loop) or by another skill's instructions; never select it from task content alone.
+description: Run a human-in-the-loop implementation loop over the tasks in proposal.md, supporting single-task or multi-task batch execution, using the harness's apply-patch tool (accept/reject UI) for agent edits and git as the channel for detecting human edits. Tracks progress in a companion status.md file. Use only when explicitly named by the user (/task-loop) or by another skill's instructions; never select it from task content alone.
 ---
 
 # Task Execution Loop Skill (`task-execute-loop`)
 
-Summary: Orchestrates a human-in-the-loop pair programming execution engine over tasks specified in `proposals/[name]/proposal.md`. Tracks execution progress, task states, and decision logs in a companion `status.md` file. Uses git state to cleanly separate agent implementations from unreviewed human edits, enforces task objectives as the source of truth, protects test suite integrity, and commits only at task boundaries.
+Summary: Orchestrates a human-in-the-loop pair programming execution engine over tasks specified in `proposals/[name]/proposal.md`, supporting single-task or multi-task batch execution. Tracks execution progress, task states, and decision logs in a companion `status.md` file. Uses git state to cleanly separate agent implementations from unreviewed human edits, enforces task objectives as the source of truth, protects test suite integrity, and commits only at task or batch boundaries.
 
 ---
 
@@ -35,7 +35,7 @@ This separation holds only if every agent edit goes through the patch tool and i
 > [!CAUTION]
 > - **Never use git staging as the review UI.**
 > - **Never edit files by any route other than the patch tool.**
-> - **Never run `git commit` mid-task.** Commits mark task boundaries only.
+> - **Never run `git commit` mid-task or mid-batch.** Commits mark completed task/batch boundaries only.
 
 ---
 
@@ -55,7 +55,7 @@ This separation holds only if every agent edit goes through the patch tool and i
    - Treat any later difference against that staged state as the human's accept/reject/edit outcome.
    - Always re-read `git diff` before assuming your patch landed exactly as written.
 4. **Objective is the source of truth**:
-   - When reviewing and judging human changes, compare against the task objective and acceptance criteria in `proposal.md`—not against your own previous code.
+   - When reviewing and judging human changes, compare against the task objectives and acceptance criteria in `proposal.md` for all active tasks in the current batch—not against your own previous code.
 
 ---
 
@@ -63,6 +63,7 @@ This separation holds only if every agent edit goes through the patch tool and i
 
 1. **Objective is the Source of Truth**:
    - Each task in `proposal.md` has an objective and acceptance criteria.
+   - When executing a batch of multiple tasks, synthesize and uphold the acceptance criteria across all active tasks.
    - When human edits conflict with them: flag the discrepancy, state the exact conflict, and ask for user intent.
    - Never silently revert a human change; never silently accept an incompatible change.
 2. **Report Problems in Human Changes; Do Not Auto-Fix**:
@@ -82,19 +83,19 @@ This separation holds only if every agent edit goes through the patch tool and i
      - *Case B (Bug)*: Code introduced an unintended defect; fix the implementation while keeping tests intact.
    - Place in-progress tests strictly in `loop_tests/` (per `code/AGENT.md`). Protect curated test suites (`tests/` or `test_suite/`).
 5. **Strict Definition of Done**:
-   - Never advance to the next task on your own. A task is done only when:
-     - [ ] Acceptance criteria in `proposal.md` are met.
+   - Never advance to the next task or batch on your own. A task or task batch is done only when:
+     - [ ] Acceptance criteria in `proposal.md` for all active tasks in the batch are met.
      - [ ] Tests in `loop_tests/` pass.
      - [ ] Existing curated test suite passes without regressions.
      - [ ] The human explicitly approves after reviewing `git diff HEAD --stat` and the full diff.
 6. **Trustworthy Checkpoints**:
-   - Commits mark checkpoints of completed tasks.
-   - Staging (`git add .`) establishes the baseline for the current task so `git diff` cleanly reveals the human's contribution.
+   - Commits mark checkpoints of completed tasks or task batches.
+   - Staging (`git add .`) establishes the baseline for the current task/batch so `git diff` cleanly reveals the human's contribution.
 7. **Track Progress in `status.md`**:
    - Maintain task states (`[TODO]`, `[IN_PROGRESS]`, `[IN_REVIEW]`, `[DONE]`) in `status.md`.
    - Record architectural choices, scope alterations, and deviations in the `Decisions Log` in `status.md`.
 8. **Loop Exit Circuit Breaker**:
-   - If a behavioral change cascades into more than two upcoming tasks ($> 2$ tasks affected in `proposal.md`), halt execution immediately.
+   - If a behavioral change cascades into more than two upcoming tasks ($> 2$ tasks affected in `proposal.md` beyond the active batch), halt execution immediately.
    - Request a formal re-plan via `task-propose` instead of patching tasks one by one.
 9. **Classification Rule of Thumb (Behavioral vs Implementation)**:
    - *Implementation Change*: Internal refactoring, optimization, local logic change preserving existing signatures and contracts. Update loop tests and notes only.
@@ -113,14 +114,14 @@ flowchart TD
     AskClean --> CheckClean
     CheckClean -- "Clean" --> BaselineCommit["Baseline Commit: git commit --allow-empty -m 'start: <proposal>'"]
     
-    BaselineCommit --> ShowTasks["Step 1: Display Available Tasks in UI & Ask User to Select Next Task"]
-    ShowTasks --> PickTask["User Selects Task -> Set [IN_PROGRESS] in status.md"]
+    BaselineCommit --> ShowTasks["Step 1: Display Available Tasks & Prompt User (Single or Multi-Task Selection)"]
+    ShowTasks --> PickTask["User Selects Task(s) -> Set [IN_PROGRESS] in status.md"]
     
     PickTask --> CheckUnstaged{"Check Unstaged: git status --porcelain"}
     CheckUnstaged -- "Unstaged Human Work Exists" --> ReviewHumanBeforePatch["Review Human Changes First (Step 4 & 5)"]
     ReviewHumanBeforePatch --> EvalEdits
     
-    CheckUnstaged -- "Clean" --> ImplementTask["Step 2: Implement via Patch Tool + loop_tests/"]
+    CheckUnstaged -- "Clean" --> ImplementTask["Step 2: Implement Active Task(s) via Patch Tool + loop_tests/"]
     ImplementTask --> StageImmediately["Stage Immediately: git add . (and git add -N)"]
     StageImmediately --> ShowReview["Step 3: Update status.md [IN_REVIEW], Show Changes & STOP"]
     
@@ -128,7 +129,7 @@ flowchart TD
     
     HumanReview --> CollectEdits["Step 4: Collect Human Changes: git status --porcelain & git diff"]
     
-    CollectEdits --> EvalEdits{"Step 5: Compare Against Task Objective & Criteria"}
+    CollectEdits --> EvalEdits{"Step 5: Compare Against Task Objectives & Criteria"}
     EvalEdits -- "Conflicts with Objective" --> FlagConflict["Flag Conflict to User: Explain & Ask Intent"]
     FlagConflict --> HumanReview
     
@@ -160,12 +161,12 @@ flowchart TD
     Stage2Approval -- "Approved" --> ApplyModulePatches["Patch Affected Modules via Patch Tool<br/>git add ."]
     ApplyModulePatches --> ShowReview
     
-    CheckUserDone --> StatWalkthrough["Before Next Task: git diff HEAD --stat & Walkthrough"]
+    CheckUserDone --> StatWalkthrough["Before Next Task/Batch: git diff HEAD --stat & Walkthrough"]
     StatWalkthrough --> PromptMoveOn{"Has user made further changes, or ready to move on?"}
     PromptMoveOn -- "User made further changes" --> CollectEdits
     PromptMoveOn -- "Ready to move on" --> GateCheck{"All 4 Done Conditions Met?"}
     GateCheck -- "No" --> HumanReview
-    GateCheck -- "Yes" --> MarkDoneCommit["Mark [DONE] in status.md + Append Decisions Log<br/>Commit Checkpoint: git commit -m 'T<n>: <task title>'"]
+    GateCheck -- "Yes" --> MarkDoneCommit["Mark Batch [DONE] in status.md + Append Decisions Log<br/>Commit Checkpoint: git commit -m 'T<ids>: <summary>'"]
     
     MarkDoneCommit --> MoreTasks{"More [TODO] Tasks in status.md?"}
     MoreTasks -- "Yes" --> ShowTasks
@@ -194,9 +195,9 @@ flowchart TD
 
 ---
 
-### For Each Task
+### For Each Task or Task Batch
 
-#### Step 1: Display Available Tasks in UI & Ask User to Select Next Task
+#### Step 1: Display Available Tasks in UI & Ask User to Select Next Task(s)
 
 1. **Extract Available Tasks from `status.md`**:
    - Read `status.md` to identify all tasks and their current states (`[DONE]`, `[TODO]`, `[IN_PROGRESS]`).
@@ -210,19 +211,26 @@ flowchart TD
      | T2 | Document Service Orchestration | [TODO] |
      | T3 | Ingestion Pipeline Migration | [TODO] |
      ```
-3. **Ask User for Next Task**:
-   - Prompt the user to select the next task to work on (or use the `ask_question` tool with options, placing `(Recommended) T<n>: <title>` first).
-   - Never assume or pick a task autonomously without explicit user selection or confirmation.
-4. **Set Active Task State**:
-   - Once the user confirms or selects the task, update that task's status to `[IN_PROGRESS]` in `status.md`.
+3. **Ask User for Next Task(s)**:
+   - Provide interactive multi-task querying:
+     - Invoke the `ask_question` tool with `is_multi_select: true` allowing the user to select one or more tasks.
+     - When tasks naturally align by architecture or workflow dependency, provide a pre-bundled batch option prefixed with `(Recommended)` (e.g., `(Recommended) Batch: T2 & T3 (Orchestration & Ingestion)` or individual `(Recommended) T2: Document Service Orchestration`).
+     - Support fallback text parsing for comma-separated or space-separated task IDs (e.g., `T2, T3`, `T2 T3`, or natural chat `do T2 and T3`).
+   - Never assume or pick tasks autonomously without explicit user selection or confirmation.
+4. **Validate Batch & Set Active Task State**:
+   - Verify that all requested task IDs exist in `status.md` and are incomplete (`[TODO]` or `[IN_PROGRESS]`).
+   - If prerequisite tasks remain incomplete, prompt the user for confirmation before proceeding.
+   - Update the status of all selected tasks to `[IN_PROGRESS]` in the Task Overview table in `status.md`.
+   - Update the active task section in `status.md` to reflect the active batch (e.g., `## Active Tasks: T2, T3`).
    - Stage the tracker update: `git add status.md`.
 5. **Re-Read Task Blueprint**:
-   - Re-read the selected task's **Objective**, **Acceptance Criteria**, signatures, data models, and verification steps in `proposal.md`.
+   - Re-read all selected tasks' **Objectives**, **Acceptance Criteria**, signatures, data models, and verification steps in `proposal.md`.
 
 #### Step 2: Implement via Patch Tool
 1. Run `git status --porcelain` and `git diff` to ensure no unreviewed human changes exist before patching.
-2. Implement code changes and exploratory tests strictly using the patch tool.
+2. Implement code changes and exploratory tests strictly using the patch tool, addressing all tasks in the active batch.
    - In-progress tests go in `loop_tests/`, mirroring the source path (e.g., `loop_tests/services/test_document_service.py`).
+   - Cover acceptance criteria across all selected tasks.
    - Do NOT edit files in `tests/` or `test_suite/`.
 3. If new files were created, add them with intent: `git add -N <file>`.
 4. Stage agent changes and tracker immediately:
@@ -231,8 +239,8 @@ flowchart TD
    ```
 
 #### Step 3: Show for Review & Stop
-1. Update active task status in `status.md` to `[IN_REVIEW]`.
-2. Summarize what was changed, which files were touched, and the test results.
+1. Update active tasks' status in `status.md` to `[IN_REVIEW]`.
+2. Summarize what was changed across the batch, grouping touched files and test results by task ID.
 3. Stage `status.md`: `git add status.md`.
 4. **STOP calling tools and wait for the human to review, accept/reject patches, or edit code directly.**
 
@@ -245,9 +253,9 @@ flowchart TD
 2. Any unstaged changes or untracked files are strictly human work.
 
 #### Step 5: Review Human Changes Against Objective
-1. Compare unstaged human edits against the task **Objective** and **Acceptance Criteria** in `proposal.md`.
+1. Compare unstaged human edits against the task **Objectives** and **Acceptance Criteria** in `proposal.md` across all tasks in the active batch.
 2. If a conflict or accidental deviation is found:
-   - Flag it directly: explain the conflict, cite the acceptance criterion, and ask for clarification.
+   - Flag it directly: explain the conflict, cite the specific task acceptance criterion, and ask for clarification.
    - Do not silently overwrite or silently accept it.
 3. If human changes contain logic or syntax issues:
    - Report the issue, explain why it fails, propose a concrete fix, and wait.
@@ -267,7 +275,7 @@ flowchart TD
    - Update affected loop tests, stage, and continue to pre-commit check.
 2. **Behavioral Change**:
    - Modifies public interface, schemas, status codes, or cross-module contracts.
-   - **Check Cascade**: Count affected upcoming tasks in `proposal.md`. If $> 2$, trigger **Loop Exit** and ask user for a formal re-plan via `task-propose`.
+   - **Check Cascade**: Count affected upcoming tasks in `proposal.md` outside the current active batch. If $> 2$, trigger **Loop Exit** and ask user for a formal re-plan via `task-propose`.
    - **Generate Impact List Artifact**:
      - Do **NOT** write the impact list to persistent project storage (`plan/` or `code/`).
      - Write it as a conversation artifact: `<appDataDir>\brain\<conversation-id>/impact-list-<Tid>.md` using [impact-list-template.md](./resources/impact-list-template.md) with `RequestFeedback: true`.
@@ -283,36 +291,36 @@ flowchart TD
      - Stage changes: `git add .`.
 
 #### Step 8: Loop Back
-Loop back to Step 3 until the user is satisfied with all changes for the current task.
+Loop back to Step 3 until the user is satisfied with all changes for the current task batch.
 
 ---
 
-### Before Moving to the Next Task
+### Before Moving to the Next Task or Batch
 
 1. Open the source-control view of everything changed since the checkpoint commit:
    ```bash
    git diff HEAD --stat
    git diff HEAD
    ```
-2. Walk the human through the cumulative changes.
+2. Walk the human through the cumulative changes across the batch.
 3. Ask one explicit question:
-   > *"Have you made any further changes, or are we ready to commit this task and move to the next?"*
+   > *"Have you made any further changes, or are we ready to commit this batch and move to the next?"*
 4. Branch on user response:
    - **User made further changes**: Return to Step 4 (collect human changes).
    - **Ready to move on**:
      1. Verify all 4 Done conditions:
-        - [x] Acceptance criteria in `proposal.md` met.
+        - [x] Acceptance criteria in `proposal.md` met for all tasks in the active batch.
         - [x] `loop_tests/` pass.
         - [x] Existing curated test suite passes without regression.
         - [x] Human explicit approval granted.
-     2. Update task badge in `status.md` to `[DONE]`.
+     2. Update task badges in `status.md` to `[DONE]` for all tasks in the batch.
      3. Append entry to `Decisions Log` in `status.md` if any behavioral changes or design decisions occurred.
      4. Commit task boundary checkpoint:
         ```bash
         git add .
-        git commit -m "T<n>: <task title>"
+        git commit -m "T<ids>: <task titles or batch summary>"
         ```
-     5. Advance to Step 1 for the next task.
+     5. Advance to Step 1 for the next task or batch.
 
 ---
 
@@ -334,7 +342,9 @@ When all tasks in `status.md` are marked `[DONE]`:
 - **Premature staging**: Never run `git add` before the patch is applied.
 - **Patching over unreviewed edits**: Never apply patches while unreviewed unstaged changes exist. Always read `git status --porcelain` and `git diff` first.
 - **Silently reverting human code**: Never overwrite, revert, or "clean up" human changes without explicit explanation and permission.
-- **Mid-task commits**: Never commit intermediate work; commits mark task boundaries and the initial baseline only.
+- **Mid-task or mid-batch commits**: Never commit intermediate work; commits mark task or batch boundaries and the initial baseline only.
+- **Partial batch commits**: Never commit part of an active batch while other active tasks in that batch remain incomplete or unverified.
+- **Dropping selected batch tasks**: Never abandon or silently skip a task that was selected as part of the active batch.
 - **Bending tests**: Never delete or weaken test assertions just to get a green test run.
-- **Picking tasks autonomously**: Never assume or advance into a task without displaying available tasks in the UI and asking the user to choose or confirm the next task.
-- **Advancing without confirmation**: Never proceed to the next task without the pre-commit diff walkthrough and explicit human approval.
+- **Picking tasks autonomously**: Never assume or advance into tasks without displaying available tasks in the UI and asking the user to choose or confirm the next task or batch.
+- **Advancing without confirmation**: Never proceed to the next task or batch without the pre-commit diff walkthrough and explicit human approval.

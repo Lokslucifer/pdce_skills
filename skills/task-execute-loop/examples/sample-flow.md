@@ -1,6 +1,6 @@
 # Sample Execution Flow (`task-execute-loop`)
 
-This document demonstrates an end-to-end trace of `task-execute-loop` executing task `T1` from `proposals/storage-migration/proposal.md`. It illustrates tracking progress via `status.md`, git separation, handling human edits, stale test diagnosis, non-persistent impact list artifact generation, two-stage approval, and the task boundary commit.
+This document demonstrates an end-to-end trace of `task-execute-loop` executing tasks from `proposals/storage-migration/proposal.md`. It illustrates batch selection via updated interactive querying, tracking progress via `status.md`, git separation, handling human edits, stale test diagnosis, non-persistent impact list artifact generation, two-stage approval, and the batch boundary checkpoint commit.
 
 ---
 
@@ -19,12 +19,12 @@ Agent:
    $ git commit --allow-empty -m "start: Pluggable Storage and Ingestion"
    [master abc1234] start: Pluggable Storage and Ingestion
 
-Tracker initialized. Ready to begin. Picking next incomplete task.
+Tracker initialized. Ready to begin. Presenting available tasks.
 ```
 
 ---
 
-## 2. Step 1: Display Available Tasks & Prompt User
+## 2. Step 1: Display Available Tasks & Interactive Querying (Multi-Select)
 
 ```markdown
 Agent:
@@ -36,27 +36,38 @@ Agent:
 | `T2` | Document Service Orchestration | `[TODO]` |
 | `T3` | Ingestion Pipeline Migration | `[TODO]` |
 
-Which task would you like to execute?
-1. (Recommended) T1: Pluggable Storage Abstraction Layer
-2. T2: Document Service Orchestration
-3. T3: Ingestion Pipeline Migration
+Invoking ask_question with is_multi_select: true:
+Question: "Select one or more Task IDs to execute together in this batch (or provide comma/space-separated IDs):"
+Options:
+  1. (Recommended) Batch: T1 & T2 (Storage Abstraction + Document Service)
+  2. T1: Pluggable Storage Abstraction Layer
+  3. T2: Document Service Orchestration
+  4. T3: Ingestion Pipeline Migration
 
-User: Let's do T1.
+User: T1, T2 (or selected batch checkbox in UI)
 
 Agent:
-- Selected Task: T1 (Pluggable Storage Abstraction Layer)
-- Status in `proposals/storage-migration/status.md` updated: [TODO] -> [IN_PROGRESS]
-- Objective: Provide an abstract storage provider interface with native async Amazon S3 and local filesystem implementations.
+- Active Batch Selected: `T1`, `T2`
+- Parsing: Extracted `["T1", "T2"]` via multi-task regex/delimiter parser.
+- Status in `proposals/storage-migration/status.md` updated:
+  - T1: `[TODO]` -> `[IN_PROGRESS]`
+  - T2: `[TODO]` -> `[IN_PROGRESS]`
+  - Active Section set to: `## Active Tasks: T1, T2`
+- Synthesizing Objectives:
+  - T1: Provide an abstract storage provider interface with native async Amazon S3 and local filesystem implementations.
+  - T2: Wire DocumentService to dynamic storage provider with upload/download streaming.
 
 Applying implementation patches via patch tool:
 - Created: `code/storage/interface.py`
 - Created: `code/storage/local.py`
 - Created: `code/storage/s3.py`
 - Created: `code/storage/factory.py`
+- Created: `code/services/document_service.py`
 - Created: `code/loop_tests/storage/test_local_storage.py`
+- Created: `code/loop_tests/services/test_document_service.py`
 
 Staging agent changes and tracker immediately:
-$ git add -N code/storage code/loop_tests/storage
+$ git add -N code/storage code/services code/loop_tests/storage code/loop_tests/services
 $ git add .
 ```
 
@@ -200,25 +211,28 @@ $ git add code/storage/s3.py
 
 ```markdown
 Agent:
-### Pre-Commit Source Control Walkthrough (T1)
+### Pre-Commit Source Control Walkthrough (Batch: T1, T2)
 
 $ git diff HEAD --stat
- code/loop_tests/storage/test_local_storage.py   | 12 ++++++++++++
- code/storage/factory.py                         | 28 ++++++++++++++++++++++++++++
- code/storage/interface.py                       | 34 ++++++++++++++++++++++++++++++++++
- code/storage/local.py                           | 82 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- code/storage/s3.py                              | 94 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- proposals/storage-migration/proposal.md         |  2 +-
- proposals/storage-migration/status.md           | 25 +++++++++++++++++++++++++
- 7 files changed, 276 insertions(+), 1 deletion(-)
+ code/loop_tests/services/test_document_service.py | 18 ++++++++++++++++++
+ code/loop_tests/storage/test_local_storage.py     | 12 ++++++++++++
+ code/services/document_service.py                 | 45 +++++++++++++++++++++++++++++++++++++++++++++
+ code/storage/factory.py                           | 28 ++++++++++++++++++++++++++++
+ code/storage/interface.py                         | 34 ++++++++++++++++++++++++++++++++++
+ code/storage/local.py                             | 82 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ code/storage/s3.py                                | 94 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ proposals/storage-migration/proposal.md           |  2 +-
+ proposals/storage-migration/status.md             | 30 ++++++++++++++++++++++++++++++
+ 9 files changed, 344 insertions(+), 1 deletion(-)
 
 Verification Checklist:
 - [x] All T1 acceptance criteria met in proposal.md.
-- [x] `code/loop_tests/storage/` pass (4/4 passed).
-- [x] Curated test suite passes (42/42 passed).
+- [x] All T2 acceptance criteria met in proposal.md.
+- [x] `code/loop_tests/` pass (8/8 passed).
+- [x] Curated test suite passes without regression (42/42 passed).
 - [x] Human explicit approval granted.
 
-Have you made any further changes, or are we ready to commit Task T1 and move to T2?
+Have you made any further changes, or are we ready to commit Batch [T1, T2] and move to T3?
 ```
 
 ---
@@ -230,22 +244,22 @@ User: Ready to commit and move on.
 
 Agent:
 1. Updating `proposals/storage-migration/status.md`:
-   - Marked T1 as `[DONE]`.
+   - Marked T1 and T2 as `[DONE]`.
    - Appended Decisions Log entry:
      ```markdown
      ### Decisions Log
-     - Task T1 (2026-10-30):
+     - Task Batch T1, T2 (2026-10-30):
        - Decision: Added `overwrite: bool = True` to `StorageProvider.save_stream()`.
-       - Rationale: Human review identified risk of accidental blob overwrites.
+       - Rationale: Human review identified risk of accidental blob overwrites during DocumentService upload.
        - Affected Modules: `s3.py`, `local.py`, `interface.py`, and downstream task T3.
        - Proposal Updated: Yes
        - Approved By: User
      ```
-2. Committing task checkpoint:
+2. Committing batch checkpoint:
    $ git add .
-   $ git commit -m "T1: Pluggable Storage Abstraction Layer"
-   [master def5678] T1: Pluggable Storage Abstraction Layer
-   7 files changed, 277 insertions(+), 1 deletion(-)
+   $ git commit -m "T1, T2: Pluggable Storage Layer & Document Service Orchestration"
+   [master def5678] T1, T2: Pluggable Storage Layer & Document Service Orchestration
+   9 files changed, 344 insertions(+), 1 deletion(-)
 
-Task T1 is complete. Moving to Task T2: Service Layer Orchestration.
+Batch [T1, T2] complete. Moving to remaining tasks (T3: Ingestion Pipeline Migration).
 ```
